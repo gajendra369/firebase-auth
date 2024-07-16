@@ -1,6 +1,11 @@
+// ignore_for_file: use_build_context_synchronously
+
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:sign_in_button/sign_in_button.dart';
+import 'SignUpScreen.dart'; // Import SignUpScreen
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -10,30 +15,35 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  final FirebaseAuth _auth = FirebaseAuth.instance; // initialze firebase instance
-
-  User? _user;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
-  final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
+  User? _user;
 
   @override
   void initState() {
     super.initState();
-    _auth.authStateChanges().listen((event) {
+    _auth.authStateChanges().listen((User? user) {
       setState(() {
-        _user = event;
+        _user = user;
       });
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text("SIGNUP"),
+    return SafeArea(
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text(
+            "Signin",
+            style: TextStyle(color: Colors.white),
+          ),
+          backgroundColor: Colors.blue,
+        ),
+        body: _user != null ? _userInfo() : _signInOptions(),
       ),
-      body: _user != null ? _userInfo() : _signInOptions(), //displaying contents in the app body depending on signup status
     );
   }
 
@@ -88,18 +98,40 @@ class _HomePageState extends State<HomePage> {
               ),
               const SizedBox(height: 20),
               ElevatedButton(
-                onPressed: _handleEmailSignIn,
-                child: const Text('Sign up with Email'),
+                onPressed: () {
+                  if (_formKey.currentState!.validate()) {
+                    _handleEmailSignIn();
+                  }
+                },
+                child: const Text('Sign In'),
               ),
-              const SizedBox(height: 20),
-              const Divider(thickness: 1),
-              const SizedBox(height: 20),
-              SizedBox(
-                height: 50,
-                child: SignInButton(
-                  Buttons.google,
-                  text: "Sign up with Google",
-                  onPressed: _handleGoogleSignIn,
+              const SizedBox(height: 10),
+              const Divider(),
+              const SizedBox(height: 10),
+              SignInButton(
+                Buttons.google,
+                text: "Sign up with Google",
+                onPressed: _handleGoogleSignIn,
+              ),
+              const SizedBox(height: 10),
+              RichText(
+                text: TextSpan(
+                  text: "Don't have an account? ",
+                  style: const TextStyle(color: Colors.black),
+                  children: [
+                    TextSpan(
+                      text: "Create one",
+                      style: const TextStyle(color: Colors.blue),
+                      recognizer: TapGestureRecognizer()
+                        ..onTap = () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                                builder: (context) => const SignUpScreen()),
+                          );
+                        },
+                    ),
+                  ],
                 ),
               ),
             ],
@@ -117,42 +149,97 @@ class _HomePageState extends State<HomePage> {
         crossAxisAlignment: CrossAxisAlignment.center,
         mainAxisSize: MainAxisSize.max,
         children: [
-          if (_user!.photoURL != null)
-            Container(
-              height: 100,
-              width: 100,
-              decoration: BoxDecoration(
-                image: DecorationImage(
-                  image: NetworkImage(_user!.photoURL!),
-                ),
+          Container(
+            height: 100,
+            width: 100,
+            decoration: BoxDecoration(
+              image: DecorationImage(
+                image: NetworkImage(_user!.photoURL ?? ''),
               ),
             ),
-          Text(_user!.email!),
-          Text(_user!.displayName ?? ""),
+          ),
+          Text(_user!.email ?? ''),
+          Text(_user!.displayName ?? ''),
           MaterialButton(
             color: Colors.red,
             child: const Text("Sign Out"),
-            onPressed: _handleSignOut,
-          )
+            onPressed: () async {
+              _emailController.clear();
+              _passwordController.clear();
+              await _auth.signOut();
+              setState(() {
+                _user = null;
+              });
+            },
+          ),
         ],
       ),
     );
   }
 
   void _handleEmailSignIn() async {
-    if (_formKey.currentState!.validate()) {
-      try {
-        UserCredential userCredential = await _auth.signInWithEmailAndPassword(
-          email: _emailController.text,
-          password: _passwordController.text,
-        );
-        setState(() {
-          _user = userCredential.user;
-        });
-      } catch (error) {
-        _showErrorMessage('Invalid email or password');
+    try {
+      UserCredential userCredential = await _auth.signInWithEmailAndPassword(
+        email: _emailController.text,
+        password: _passwordController.text,
+      );
+
+      if (userCredential.user != null && !userCredential.user!.emailVerified) {
+        await _auth.signOut();
+        _showEmailNotVerifiedDialog();
+      }
+    } catch (error) {
+      _showErrorMessage(error.toString());
+    }
+  }
+
+  void _handleGoogleSignIn() {
+    try {
+      GoogleAuthProvider googleAuthProvider = GoogleAuthProvider();
+      _auth.signInWithProvider(googleAuthProvider);
+    } catch (error) {
+      if (kDebugMode) {
+        print(error);
       }
     }
+  }
+
+  void _showEmailNotVerifiedDialog() {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Email not verified'),
+          content: const Text('Please verify your email to continue.'),
+          actions: [
+            TextButton(
+              onPressed: () async {
+                await _user!.sendEmailVerification();
+                Navigator.of(context).pop();
+                _showSuccessMessage('Verification email sent.');
+              },
+              child: const Text('Resend Verification Email'),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+              child: const Text('OK'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _showSuccessMessage(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.green,
+        duration: const Duration(seconds: 4),
+      ),
+    );
   }
 
   void _showErrorMessage(String message) {
@@ -160,28 +247,8 @@ class _HomePageState extends State<HomePage> {
       SnackBar(
         content: Text(message),
         backgroundColor: Colors.red,
-        duration: const Duration(seconds: 3), // Show the message for 3 seconds
+        duration: const Duration(seconds: 3),
       ),
     );
-  }
-
-
-  void _handleGoogleSignIn() async {
-    try {
-      GoogleAuthProvider _googleAuthProvider = GoogleAuthProvider();
-      UserCredential userCredential = await _auth.signInWithProvider(_googleAuthProvider);
-      setState(() {
-        _user = userCredential.user;
-      });
-    } catch (error) {
-      print(error);
-    }
-  }
-
-  void _handleSignOut() async {
-    await _auth.signOut();
-    setState(() {
-      _user = null;
-    });
   }
 }
